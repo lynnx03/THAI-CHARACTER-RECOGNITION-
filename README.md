@@ -1,189 +1,182 @@
 # 🔤 Thai Character Recognition — Transfer Learning
 
-โปรเจกต์นี้เป็นระบบจำแนกอักษรไทยและเลขไทยจากภาพ โดยใช้เทคนิค Transfer Learning เปรียบเทียบประสิทธิภาพของ 3 โมเดล ได้แก่ **ResNet50**, **EfficientNet-B3** และ **MobileNetV3-Large**
+Classifying **72 classes of Thai handwritten characters, digits, and tone marks** from images,
+using **Transfer Learning**. The project benchmarks three CNN architectures head-to-head:
+**ResNet50**, **EfficientNet-B3**, and **MobileNetV3-Large**.
+
+Thai OCR carries challenges that Latin scripts don't: vowels and tone marks can stack in
+multiple layers (above, middle, and below a consonant), and several character pairs look nearly
+identical (e.g. ฒ / ฐ / ถ). That makes it a genuinely harder image-classification problem than
+typical Latin-character recognition — and a good testbed for comparing how different
+transfer-learning backbones cope.
+
+Inputs are **grayscale (1-channel)** — Thai characters don't depend on color. Each ImageNet-pretrained
+model has its first conv layer patched to accept 1 channel and its classifier head replaced with
+a 72-class output.
+
+> 🧑‍🤝‍🧑 **This was a team project.** See [My Contributions](#-my-contributions) for an honest
+> description of my personal role.
 
 ---
 
-## 📋 สารบัญ
+## ✨ Key Features
 
-- [ภาพรวมโปรเจกต์](#ภาพรวมโปรเจกต์)
-- [โครงสร้างโฟลเดอร์](#โครงสร้างโฟลเดอร์)
-- [ความต้องการของระบบ](#ความต้องการของระบบ)
-- [การติดตั้ง](#การติดตั้ง)
-- [การเตรียมข้อมูล](#การเตรียมข้อมูล)
-- [วิธีการใช้งาน](#วิธีการใช้งาน)
-- [รายละเอียดโมเดล](#รายละเอียดโมเดล)
-- [Data Augmentation](#data-augmentation)
-- [Output ที่ได้](#output-ที่ได้)
+- **72-class** Thai character / digit / tone-mark classifier
+- **3-architecture benchmark**: ResNet50 vs. EfficientNet-B3 vs. MobileNetV3-Large
+- **Grayscale-adapted transfer learning** — first conv layer patched to 1 channel
+- **3-level data augmentation** (gentle / mild / strong) to handle class imbalance
+- **Stratified 80/10/10 split** with a fixed seed → reproducible, every class in every split
+- **Robust training loop** — best-checkpoint saving, early stopping, `ReduceLROnPlateau`
+- **CLI + notebook workflow** — train, evaluate, and run single-image inference either way
+- Runs on **CUDA, Apple MPS, or CPU** (auto-detected)
 
----
+## 🛠 Tech Stack
 
-## ภาพรวมโปรเจกต์
+| Area | Tools |
+|---|---|
+| Deep learning | PyTorch, torchvision (pretrained CNNs) |
+| Metrics | scikit-learn (accuracy, macro-F1, classification report) |
+| Data / images | Pillow, NumPy |
+| Visualization | matplotlib, seaborn |
+| Utilities | tqdm |
 
-ระบบนี้สามารถจำแนกตัวอักษรไทยและเลขไทยจากภาพ โดยมีความสามารถหลัก ดังนี้
-
-- **Triple Data Augmentation** — แต่ละภาพถูกเพิ่มเป็น 3 เวอร์ชัน (Gentle / Mild / Strong) เพื่อขยายขนาด dataset เป็น 3 เท่า
-- **Transfer Learning** — ใช้ pretrained weights จาก ImageNet พร้อมปรับ input layer รองรับภาพ Grayscale (1 channel)
-- **เปรียบเทียบ 3 โมเดล** — ResNet50, EfficientNet-B3, MobileNetV3-Large
-- **Evaluation ครบถ้วน** — Confusion Matrix, Classification Report, Training History, Overfitting Analysis
-- **ทดสอบภาพเดี่ยว** — นำภาพใหม่มาทดสอบกับโมเดลที่ฝึกไว้แล้ว
-
----
-
-## โครงสร้างโฟลเดอร์
+## 📁 Project Structure
 
 ```
-├── Samlong.ipynb               # Notebook หลัก
-├── Data_text/                  # Dataset (โฟลเดอร์ย่อยตามชื่ออักษร)
-│   ├── ก/
-│   ├── ข/
-│   ├── ๐/
-│   └── ...
-├── outputs_resnet50/           # ผลลัพธ์ของ ResNet50
-│   ├── resnet50_best.pt
-│   ├── training_history.json
-│   ├── class_to_idx.json
-│   └── misclassified/
-├── outputs_efficientnet_b3/    # ผลลัพธ์ของ EfficientNet-B3
-├── outputs_mobilenet_v3/       # ผลลัพธ์ของ MobileNetV3-Large
-├── training_comparison.png     # กราฟเปรียบเทียบโมเดลทั้ง 3
-└── training_data_distribution.png
+.
+├── Thai-Character-Recognition.ipynb   # notebook orchestrator (calls into src/)
+├── class_mapping.json                 # folder name ↔ Thai character (72 classes)
+├── requirements.txt
+├── src/
+│   ├── dataset.py     # transforms, stratified split, ThaiCharDataset
+│   ├── model.py       # create_model() factory, get_device()
+│   ├── train.py       # training loop, evaluation, CLI entrypoint
+│   └── predict.py     # single-image inference + CLI
+├── make_assets.py     # regenerates the README preview images from the dataset
+├── fill_results.py    # fills the results table below from results_summary.json
+├── assets/            # small preview images (committed)
+├── <class_name>/      # per-class image folders (gitignored, prepared locally)
+└── outputs_<model>/   # training artifacts & weights (gitignored)
 ```
 
----
+## 🧠 How It Works
 
-## ความต้องการของระบบ
+<p align="center">
+  <img src="assets/dataset_samples.png" alt="Thai character dataset — 72 classes, one sample each" width="820">
+  <br>
+  <em>The 72 classes — one real sample each (grayscale characters, digits, and tone marks).</em>
+</p>
 
-- Python 3.8+
-- CUDA (แนะนำ แต่ไม่บังคับ — รองรับ CPU)
+**1. Dataset** — Images are organized as `<class_name>/<image>.jpg`, where each `<class_name>`
+maps to a Thai character in `class_mapping.json`. `src/dataset.py` reads **only** the 72 folders
+listed in the mapping, so it never accidentally scans `src/` or output directories. Supported
+extensions: `.jpg .jpeg .png .bmp .gif`.
 
-### Python Packages
+**2. Stratified split** — Data is split **80/10/10 train/val/test, per class, with seed 42**, so every
+class is represented in every split and results are reproducible. Classes with very few images are
+guaranteed at least one training example.
 
-```
-torch
-torchvision
-numpy
-matplotlib
-seaborn
-scikit-learn
-tqdm
-Pillow
-```
+**3. Augmentation** — Three escalating augmentation levels expand the training data and improve
+robustness to real handwriting variation:
 
----
+<p align="center">
+  <img src="assets/augmentation_preview.png" alt="Augmentation levels: original, gentle, mild, strong" width="720">
+  <br>
+  <em>Gentle → mild → strong augmentation (rotation, affine, perspective, blur) on a grayscale input.</em>
+</p>
 
-## การติดตั้ง
+- `single` (default) — one randomly chosen augmentation level per image (fast)
+- `triple` — all three levels applied, tripling the effective dataset size
+
+**4. Transfer learning** — Each backbone (ResNet50 / EfficientNet-B3 / MobileNetV3-Large) is loaded
+with ImageNet weights, has its first conv layer rebuilt for 1-channel input, and its classifier head
+replaced with a 72-class linear layer. Training uses Adam (`lr=1e-3`), cross-entropy loss, best-model
+checkpointing on validation accuracy, early stopping on validation loss, and `ReduceLROnPlateau`.
+
+**5. Evaluation** — The best checkpoint is scored on the held-out test set for accuracy and macro-F1,
+with a full per-class classification report and confusion matrix.
+
+## 📊 Results (Test Set)
+
+> Trained for up to 10 epochs, `augment=single`, batch=32, Adam `lr=1e-3`,
+> early stopping (patience 4) + `ReduceLROnPlateau`, on Apple MPS.
+> Numbers come from the team's actual training runs (`results_summary.json`).
+
+<!-- RESULTS_TABLE -->
+| Model | Test Accuracy | Macro F1 | Best Val Acc | Epochs |
+|---|---|---|---|---|
+| ResNet50 | 97.79% | 0.9780 | 98.23% | 10 |
+| EfficientNet-B3 | 97.63% | 0.9592 | 97.96% | 10 |
+| MobileNetV3-Large | 96.59% | 0.9238 | 97.11% | 10 |
+<!-- /RESULTS_TABLE -->
+
+### Sample Predictions
+
+<!-- TODO: add a screenshot of single-image predictions here, e.g. assets/sample_predictions.png -->
+> 📷 _Sample-prediction screenshot placeholder — run `src.predict` on a few test images and drop the
+> output image here._
+
+## ⚙️ Setup
 
 ```bash
-pip install torch torchvision numpy matplotlib seaborn scikit-learn tqdm Pillow
+pip install -r requirements.txt
 ```
 
-> 💡 สำหรับ GPU ให้ติดตั้ง PyTorch พร้อม CUDA ตาม [pytorch.org](https://pytorch.org/get-started/locally/)
+Versions are pinned to the training environment (Apple Silicon / MPS). On a CUDA machine, install the
+matching `torch` / `torchvision` build from https://pytorch.org instead of the pinned versions.
 
----
+> **Dataset note:** the per-class image folders are **not** included in the repo (they're large and
+> gitignored). Arrange images locally as `<class_name>/<image>.jpg` matching the keys in
+> `class_mapping.json` before training.
 
-## การเตรียมข้อมูล
+## 🚀 Train
 
-จัดโครงสร้างโฟลเดอร์ `Data_text/` ให้แต่ละโฟลเดอร์ย่อยตั้งชื่อตามอักษรที่ต้องการจำแนก เช่น
+```bash
+# Train all three models (up to 10 epochs, early stopping + ReduceLROnPlateau)
+python -m src.train --models all --epochs 10 --augment single
 
+# Train a single model
+python -m src.train --models efficientnet_b3 --epochs 15
+
+# Quick smoke test (cap images per class)
+python -m src.train --models mobilenet_v3 --epochs 1 --max-per-class 20
 ```
-Data_text/
-├── ก/
-│   ├── image_001.png
-│   └── image_002.png
-├── ข/
-└── ๑/
+
+Artifacts are saved to `outputs_<model>/` (`*_best.pt`, `training_history.json`,
+`classification_report_*.json`) with a combined `results_summary.json`.
+
+## 🔮 Predict a Single Image
+
+```bash
+python -m src.predict path/to/image.jpg --model efficientnet_b3
 ```
 
-รองรับไฟล์ภาพ `.png`, `.jpg`, `.jpeg`
-
----
-
-## วิธีการใช้งาน
-
-เปิดไฟล์ `Samlong.ipynb` แล้วรันเซลล์ตามลำดับ
-
-### 1. ตั้งค่าพารามิเตอร์
-
-แก้ไขค่าในเซลล์ **Configuration & Settings**
+Or in Python / a notebook:
 
 ```python
-DATA_PATH = "Data_text"
-BATCH_SIZE = 32
-NUM_EPOCHS = 20
-LEARNING_RATE = 0.001
-IMG_SIZE = 224
+from src.predict import test_single_image
+res = test_single_image("kor_kai/0001.jpg", model_name="efficientnet_b3", topk=3)
+print(res["predicted_char"], res["confidence"])
 ```
 
-> 💡 สำหรับทดสอบเบื้องต้น ลด `NUM_EPOCHS` เป็น 5–10 เพื่อประหยัดเวลา
+## 🙋 My Contributions
 
-### 2. ฝึกโมเดล
+This was a **team project**. My personal contribution was **dataset preparation and labeling**:
 
-**ฝึกโมเดลเดียว** (เร็วกว่า เหมาะสำหรับทดสอบ)
+- The source images arrived in folders named only by number (161–249) with **no mapping** to actual
+  Thai characters. I **inspected the images by hand and assigned the correct Thai character label** to
+  each of the **72 classes**, producing the `class_mapping.json` used throughout the pipeline.
+- Organized the images into the per-class folder structure the data loader expects
+  (`<class_name>/<image>.jpg`).
+- Flagged **data-quality issues** for the team: near-identical character pairs that are easy to
+  mislabel (e.g. ฒ / ฐ / ถ) and **severely under-represented classes** (some with only 1–4 images),
+  which directly informed the stratified-split and augmentation strategy.
 
-```python
-TRAIN_SINGLE_MODEL = True
-model_to_train = 'efficientnet_b3'  # เลือก: 'resnet50', 'efficientnet_b3', 'mobilenet_v3'
-```
+The model architectures, training loop, and evaluation code were built by other team members.
 
-**ฝึกทั้ง 3 โมเดลพร้อมกัน** (รันเซลล์ Train All Models)
+## 📝 Notes
 
-### 3. ทดสอบโมเดล
-
-```python
-TEST_INDIVIDUAL = True
-test_model_name = 'efficientnet_b3'
-```
-
-### 4. ทดสอบภาพเดี่ยว
-
-รันเซลล์สุดท้าย แล้วเลือกไฟล์ภาพผ่าน File Dialog ระบบจะแสดงผลการทำนายพร้อม Confidence Score
-
----
-
-## รายละเอียดโมเดล
-
-| โมเดล | Input Layer | Output Layer | หมายเหตุ |
-|---|---|---|---|
-| ResNet50 | Conv2d(1, 64, 7×7) | Linear(2048, num_classes) | ปรับ conv1 รับ 1 channel |
-| EfficientNet-B3 | Conv2d(1, 40, 3×3) | Linear(1536, num_classes) | ปรับ features[0][0] |
-| MobileNetV3-Large | Conv2d(1, 16, 3×3) | Linear(1280, num_classes) | ปรับ features[0][0] |
-
-โมเดลทุกตัวรับ **Grayscale image ขนาด 224×224** และใช้ **Adam optimizer** กับ **CrossEntropyLoss**
-
----
-
-## Data Augmentation
-
-ใช้ **Triple Augmentation** — แต่ละภาพต้นฉบับจะถูก augment เป็น 3 เวอร์ชัน ทำให้ dataset training ขยายเป็น 3 เท่าโดยอัตโนมัติ
-
-| ระดับ | Rotation | Affine | Perspective | GaussianBlur |
-|---|---|---|---|---|
-| 🟢 Gentle | ±5° | — | — | σ 0.1–0.3 |
-| 🟡 Mild | ±10° | translate 5%, scale 90–110% | — | σ 0.3–0.7 |
-| 🔴 Strong | ±20° | translate 10%, scale 85–115%, shear 5° | distortion 0.1 | σ 0.7–1.0 |
-
-**Validation / Test** ไม่มี augmentation — ใช้เฉพาะ resize, pad, normalize
-
----
-
-## Output ที่ได้
-
-หลังจากฝึกและทดสอบโมเดล ไฟล์ต่อไปนี้จะถูกสร้างในโฟลเดอร์ `outputs_<model_name>/`
-
-| ไฟล์ | คำอธิบาย |
-|---|---|
-| `<model>_best.pt` | weights ของโมเดลที่ดีที่สุด |
-| `training_history.json` | ค่า loss/accuracy ในแต่ละ epoch |
-| `class_to_idx.json` | mapping ระหว่างชื่ออักษรกับ index |
-| `confusion_matrix_<model>_test.png` | Confusion Matrix บน Test Set |
-| `classification_report_<model>.json` | Precision / Recall / F1 รายคลาส |
-| `prediction_samples_<model>.png` | ตัวอย่างภาพพร้อมผลการทำนาย |
-| `training_history_<model>.png` | กราฟ Loss / Accuracy |
-
-ไฟล์ระดับโปรเจกต์
-
-| ไฟล์ | คำอธิบาย |
-|---|---|
-| `training_comparison.png` | เปรียบเทียบ training curve ทั้ง 3 โมเดล |
-| `training_data_distribution.png` | การกระจายข้อมูลในแต่ละคลาส |
+- Some classes have very few images; predictions for those are less reliable by design.
+- A handful of the 72 labels were assigned by visual inspection and should be spot-checked before any
+  production use.
+- Training on MPS (no CUDA) is slow — ResNet50 takes roughly 16 minutes per epoch.
